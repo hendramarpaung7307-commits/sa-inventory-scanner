@@ -1,0 +1,141 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SA Inventory Barcode Scanner</title>
+
+  <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #10243a;
+      color: white;
+      text-align: center;
+      padding: 20px;
+      margin: 0;
+    }
+
+    .scanner-box {
+      max-width: 500px;
+      margin: 30px auto;
+      background: white;
+      color: #203247;
+      padding: 20px;
+      border-radius: 15px;
+    }
+
+    video {
+      width: 100%;
+      background: black;
+      border-radius: 10px;
+      min-height: 220px;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 7px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #startBtn { background: #1677d2; color: white; }
+    #closeBtn { background: #dc2626; color: white; }
+    #status { font-size: 15px; margin-top: 15px; }
+  </style>
+</head>
+
+<body>
+  <div class="scanner-box">
+    <h2>BARCODE SCANNER</h2>
+    <p>Arahkan kamera ke Barcode 1D atau QR Code</p>
+
+    <video id="scannerVideo" autoplay muted playsinline></video>
+
+    <div id="status">Menunggu kamera...</div>
+
+    <button id="startBtn" onclick="startScanner()">START SCANNER</button>
+    <button id="closeBtn" onclick="closeScanner()">CLOSE</button>
+  </div>
+
+  <script>
+    let controls = null;
+    let locked = false;
+
+    const video = document.getElementById('scannerVideo');
+    const statusText = document.getElementById('status');
+
+    async function startScanner() {
+      if (!window.ZXingBrowser) {
+        statusText.textContent = 'Library scanner gagal dimuat.';
+        return;
+      }
+
+      try {
+        locked = false;
+        statusText.textContent = 'Meminta izin kamera...';
+
+        const reader = new ZXingBrowser.BrowserMultiFormatReader();
+
+        controls = await reader.decodeFromConstraints(
+          {
+            video: {
+              facingMode: { ideal: 'environment' }
+            }
+          },
+          video,
+          function(result, error) {
+            if (result && !locked) {
+              locked = true;
+
+              const code = result.getText().trim();
+
+              statusText.textContent = 'Berhasil membaca: ' + code;
+
+              if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({
+                  type: 'SA_INVENTORY_SCAN',
+                  code: code
+                }, '*');
+              }
+
+              closeScanner();
+            }
+
+            if (error && error.name !== 'NotFoundException') {
+              console.warn(error);
+            }
+          }
+        );
+
+        statusText.textContent =
+          'Kamera aktif. Arahkan ke Barcode atau QR Code.';
+
+      } catch (error) {
+        statusText.textContent =
+          'Gagal membuka kamera: ' + error.message;
+      }
+    }
+
+    function closeScanner() {
+      if (controls) {
+        controls.stop();
+        controls = null;
+      }
+
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+    }
+
+    window.addEventListener('beforeunload', closeScanner);
+  </script>
+</body>
+</html>
