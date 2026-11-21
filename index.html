@@ -71,58 +71,100 @@
     const video = document.getElementById('scannerVideo');
     const statusText = document.getElementById('status');
 
-    async function startScanner() {
-      if (!window.ZXingBrowser) {
-        statusText.textContent = 'Library scanner gagal dimuat.';
-        return;
-      }
+  
+async function startScanner() {
+  if (!window.ZXingBrowser ||
+      !window.ZXingBrowser.BrowserMultiFormatReader ||
+      !window.ZXingBrowser.BarcodeFormat) {
+    statusText.textContent =
+      'Library scanner gagal dimuat. Periksa koneksi internet.';
+    return;
+  }
 
-      try {
-        locked = false;
-        statusText.textContent = 'Meminta izin kamera...';
+  try {
+    locked = false;
+    statusText.textContent = 'Meminta izin kamera...';
 
-        const reader = new ZXingBrowser.BrowserMultiFormatReader();
+    const formats = window.ZXingBrowser.BarcodeFormat;
 
-        controls = await reader.decodeFromConstraints(
-          {
-            video: {
-              facingMode: { ideal: 'environment' }
-            }
-          },
-          video,
-          function(result, error) {
-            if (result && !locked) {
-              locked = true;
+    const reader = new window.ZXingBrowser.BrowserMultiFormatReader();
 
-              const code = result.getText().trim();
+    reader.possibleFormats = [
+      formats.QR_CODE,
+      formats.CODE_128,
+      formats.CODE_39,
+      formats.CODE_93,
+      formats.EAN_13,
+      formats.EAN_8,
+      formats.UPC_A,
+      formats.UPC_E,
+      formats.ITF,
+      formats.CODABAR,
+      formats.DATA_MATRIX,
+      formats.PDF_417,
+      formats.AZTEC
+    ].filter(format => format !== undefined);
 
-              statusText.textContent = 'Berhasil membaca: ' + code;
+    controls = await reader.decodeFromConstraints(
+      {
+        audio: false,
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      },
+      video,
+      function(result, error) {
+        if (result && !locked) {
+          locked = true;
 
-              if (window.opener && !window.opener.closed) {
-                window.opener.postMessage({
-                  type: 'SA_INVENTORY_SCAN',
-                  code: code
-                }, '*');
-              }
+          const code = result.getText().trim();
 
-              closeScanner();
-            }
-
-            if (error && error.name !== 'NotFoundException') {
-              console.warn(error);
-            }
+          if (!code) {
+            locked = false;
+            return;
           }
-        );
 
-        statusText.textContent =
-          'Kamera aktif. Arahkan ke Barcode atau QR Code.';
+          statusText.textContent = 'Berhasil membaca: ' + code;
 
-      } catch (error) {
-        statusText.textContent =
-          'Gagal membuka kamera: ' + error.message;
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({
+              type: 'SA_INVENTORY_SCAN',
+              code: code
+            }, '*');
+          }
+
+          closeScanner();
+        }
+
+        if (error && error.name !== 'NotFoundException') {
+          console.warn('Scanner error:', error);
+          statusText.textContent =
+            'Kesalahan pembacaan: ' + error.message;
+        }
       }
+    );
+
+    const track = video.srcObject &&
+      video.srcObject.getVideoTracks()[0];
+
+    if (track && track.applyConstraints) {
+      track.applyConstraints({
+        advanced: [{ focusMode: 'continuous' }]
+      }).catch(() => {});
     }
 
+    statusText.textContent =
+      'Kamera aktif. Arahkan barcode ke tengah kamera dan tahan HP.';
+
+  } catch (error) {
+    statusText.textContent =
+      'Gagal membuka scanner: ' + error.message;
+    console.error(error);
+  }
+}
+  
     function closeScanner() {
       if (controls) {
         controls.stop();
