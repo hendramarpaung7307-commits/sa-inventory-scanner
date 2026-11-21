@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SA Inventory - Camera Scanner</title>
+  <title>SA Inventory - Barcode Scanner</title>
 
   <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
 
@@ -14,172 +14,339 @@
     body {
       margin: 0;
       padding: 20px;
+      min-height: 100vh;
+      background: #10263b;
       font-family: Arial, sans-serif;
-      background: #edf3f8;
       color: #17324d;
-      text-align: center;
     }
 
     .scanner-box {
       width: 100%;
-      max-width: 520px;
-      margin: 20px auto;
+      max-width: 540px;
+      margin: 5px auto;
       padding: 20px;
       background: white;
-      border: 1px solid #b7c9d8;
-      border-radius: 14px;
-      box-shadow: 0 4px 15px #0002;
+      border-radius: 15px;
+      text-align: center;
     }
 
-    h2 { margin-top: 5px; }
+    h2 { margin: 18px 0; }
 
     video {
       display: block;
       width: 100%;
-      min-height: 240px;
-      max-height: 430px;
-      margin: 18px 0;
-      background: #111;
+      height: 300px;
+      background: black;
       border-radius: 10px;
       object-fit: cover;
+      margin: 15px 0;
     }
 
-    button {
+    select, button {
       width: 100%;
       padding: 14px;
       margin-top: 10px;
       border: 0;
-      border-radius: 6px;
-      font-size: 16px;
+      border-radius: 7px;
+      font-size: 15px;
+    }
+
+    select {
+      border: 1px solid #bbb;
+      background: white;
+    }
+
+    button {
+      color: white;
       font-weight: bold;
       cursor: pointer;
     }
 
-    #startBtn { background: #82c85c; }
-    #closeBtn { background: #dc2626; color: white; }
+    #startBtn { background: #1976d2; }
+    #stopBtn { background: #dc2626; }
+    #copyBtn { background: #198754; }
 
     #status {
-      min-height: 42px;
+      min-height: 24px;
       line-height: 1.5;
+      margin: 12px 0;
+    }
+
+    #result {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #aaa;
+      border-radius: 7px;
+      font-size: 16px;
+      text-align: center;
       overflow-wrap: anywhere;
+    }
+
+    @media(max-width: 480px) {
+      body { padding: 12px; }
+      .scanner-box { padding: 15px; }
+      video { height: 280px; }
     }
   </style>
 </head>
 
 <body>
   <div class="scanner-box">
-    <h2>SA INVENTORY SCANNER</h2>
-    <p>Arahkan kamera ke QR Code atau Barcode 2D</p>
+    <h2>BARCODE SCANNER</h2>
+    <p>Arahkan kamera belakang ke Barcode 1D atau QR Code</p>
 
-    <video id="video" autoplay muted playsinline></video>
+    <video id="scannerVideo" autoplay muted playsinline></video>
 
-    <p id="status">Tekan tombol MULAI SCAN untuk mengaktifkan kamera.</p>
+    <select id="cameraSelect">
+      <option value="">Kamera otomatis</option>
+    </select>
 
     <button id="startBtn" onclick="startScanner()">
-      MULAI SCAN
+      START SCANNER
     </button>
 
-    <button id="closeBtn" onclick="closeScanner()">
-      TUTUP SCANNER
+    <button id="stopBtn" onclick="stopScanner()">
+      CLOSE CAMERA
+    </button>
+
+    <p id="status">Tekan START SCANNER untuk memulai.</p>
+
+    <h3>HASIL SCAN</h3>
+    <div id="result">Belum ada barcode</div>
+
+    <button id="copyBtn" onclick="copyResult()">
+      COPY HASIL
     </button>
   </div>
 
-  <script>
-    let controls = null;
-    let scanLocked = false;
+<script>
+  let reader = null;
+  let scannerControls = null;
+  let activeStream = null;
+  let scanning = false;
+  let scanLocked = false;
 
-    const statusText = document.getElementById('status');
-    const video = document.getElementById('video');
+  const video = document.getElementById('scannerVideo');
+  const statusText = document.getElementById('status');
+  const resultBox = document.getElementById('result');
+  const cameraSelect = document.getElementById('cameraSelect');
 
-    async function startScanner() {
-      if (!window.ZXingBrowser ||
-          !ZXingBrowser.BrowserMultiFormatReader) {
-        statusText.textContent =
-          'Library scanner gagal dimuat. Periksa koneksi internet.';
-        return;
-      }
+  async function startScanner() {
+    if (scanning) return;
 
+    if (!window.ZXingBrowser ||
+        !window.ZXingBrowser.BrowserMultiFormatReader) {
+      statusText.textContent =
+        'Library scanner gagal dimuat. Periksa koneksi internet.';
+      return;
+    }
+
+    scanning = true;
+    scanLocked = false;
+    resultBox.textContent = 'Belum ada barcode';
+    statusText.textContent = 'Meminta izin kamera...';
+
+    try {
+      reader = new ZXingBrowser.BrowserMultiFormatReader();
+
+      let stream;
+
+      // Prioritaskan kamera belakang Android.
       try {
-        stopCamera();
-        scanLocked = false;
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+      } catch (firstError) {
+        console.warn('Kamera belakang otomatis gagal:', firstError);
 
-        statusText.textContent = 'Meminta izin kamera...';
+        // Coba mencari kamera belakang melalui daftar perangkat.
+        const devices =
+          await navigator.mediaDevices.enumerateDevices();
 
-        const reader =
-          new ZXingBrowser.BrowserMultiFormatReader();
-
-        controls = await reader.decodeFromVideoDevice(
-          undefined,
-          video,
-          (result, error) => {
-            if (result && !scanLocked) {
-              scanLocked = true;
-
-              const code = result.getText().trim();
-
-              if (code) {
-                statusText.textContent =
-                  'Berhasil membaca: ' + code;
-
-                sendResult(code);
-              }
-            }
-
-            if (error &&
-                error.name !== 'NotFoundException') {
-              console.warn(error);
-            }
-          }
+        const cameras = devices.filter(
+          device => device.kind === 'videoinput'
         );
 
-        statusText.textContent =
-          'Kamera aktif. Arahkan ke barcode atau QR Code.';
+        const rearCamera = cameras.find(device =>
+          /back|rear|environment|belakang/i.test(device.label)
+        );
 
+        if (rearCamera && rearCamera.deviceId) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              deviceId: { exact: rearCamera.deviceId }
+            },
+            audio: false
+          });
+        } else {
+          // Fallback terakhir agar pengguna tetap dapat mencoba kamera.
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
+      }
+
+      activeStream = stream;
+      video.srcObject = stream;
+      await video.play();
+
+      await loadCameraList();
+
+      statusText.textContent =
+        'Kamera aktif. Arahkan ke barcode atau QR Code.';
+
+      scannerControls = await reader.decodeFromStream(
+        stream,
+        video,
+        (result, error) => {
+          if (result && !scanLocked) {
+            scanLocked = true;
+
+            const value = result.getText().trim();
+            resultBox.textContent = value;
+            statusText.textContent = 'Barcode berhasil dibaca!';
+
+            // Hentikan kamera setelah satu hasil berhasil dibaca.
+            stopScanner();
+            statusText.textContent =
+              'Scan berhasil: ' + value;
+          }
+        }
+      );
+
+    } catch (error) {
+      console.error(error);
+      stopScanner();
+
+      statusText.textContent =
+        'Gagal membuka kamera: ' + error.message;
+    }
+  }
+
+  async function loadCameraList() {
+    try {
+      const devices =
+        await navigator.mediaDevices.enumerateDevices();
+
+      const cameras = devices.filter(
+        device => device.kind === 'videoinput'
+      );
+
+      cameraSelect.innerHTML =
+        '<option value="">Kamera otomatis</option>';
+
+      cameras.forEach((camera, index) => {
+        const option = document.createElement('option');
+        option.value = camera.deviceId;
+        option.textContent =
+          camera.label || ('Kamera ' + (index + 1));
+
+        cameraSelect.appendChild(option);
+      });
+
+      const rear = cameras.find(camera =>
+        /back|rear|environment|belakang/i.test(camera.label)
+      );
+
+      if (rear) cameraSelect.value = rear.deviceId;
+
+    } catch (error) {
+      console.warn('Daftar kamera tidak tersedia:', error);
+    }
+  }
+
+  async function stopScanner() {
+    scanning = false;
+
+    if (scannerControls) {
+      try {
+        await scannerControls.stop();
       } catch (error) {
-        statusText.textContent =
-          'Gagal membuka kamera: ' + error.message;
-
-        console.error(error);
+        console.warn(error);
       }
+      scannerControls = null;
     }
 
-    function sendResult(code) {
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({
-          type: 'SA_INVENTORY_SCAN_RESULT',
-          code: code
-        }, '*');
-
-        statusText.textContent =
-          'Hasil scan dikirim ke SA Inventory.';
-        stopCamera();
-
-        setTimeout(() => window.close(), 700);
-      } else {
-        statusText.textContent =
-          'Aplikasi utama tidak ditemukan. Silakan buka scanner dari SA Inventory.';
-        scanLocked = false;
-      }
+    if (activeStream) {
+      activeStream.getTracks().forEach(track => track.stop());
+      activeStream = null;
     }
 
-    function stopCamera() {
-      if (controls) {
-        controls.stop();
-        controls = null;
-      }
-
-      if (video.srcObject) {
-        video.srcObject.getTracks().forEach(track => track.stop());
-        video.srcObject = null;
-      }
+    if (video.srcObject) {
+      video.srcObject = null;
     }
 
-    function closeScanner() {
-      stopCamera();
-      window.close();
+    statusText.textContent = 'Kamera telah ditutup.';
+  }
+
+  async function copyResult() {
+    const value = resultBox.textContent;
+
+    if (!value || value === 'Belum ada barcode') {
+      statusText.textContent = 'Belum ada hasil scan.';
+      return;
     }
 
-    window.addEventListener('pagehide', stopCamera);
-  </script>
+    try {
+      await navigator.clipboard.writeText(value);
+      statusText.textContent = 'Hasil berhasil disalin.';
+    } catch (error) {
+      statusText.textContent =
+        'Tidak dapat menyalin hasil: ' + error.message;
+    }
+  }
+
+  cameraSelect.addEventListener('change', async function() {
+    const deviceId = this.value;
+    if (!deviceId) return;
+
+    await stopScanner();
+
+    try {
+      scanning = true;
+      scanLocked = false;
+      reader = new ZXingBrowser.BrowserMultiFormatReader();
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: deviceId }
+        },
+        audio: false
+      });
+
+      activeStream = stream;
+      video.srcObject = stream;
+      await video.play();
+
+      scannerControls = await reader.decodeFromStream(
+        stream,
+        video,
+        result => {
+          if (result && !scanLocked) {
+            scanLocked = true;
+            resultBox.textContent = result.getText().trim();
+            stopScanner();
+          }
+        }
+      );
+
+      statusText.textContent = 'Kamera pilihan aktif.';
+
+    } catch (error) {
+      console.error(error);
+      stopScanner();
+      statusText.textContent =
+        'Gagal mengganti kamera: ' + error.message;
+    }
+  });
+
+  window.addEventListener('pagehide', stopScanner);
+</script>
 </body>
 </html>
