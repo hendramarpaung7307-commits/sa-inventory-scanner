@@ -1,0 +1,185 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SA Inventory - Camera Scanner</title>
+
+  <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #edf3f8;
+      color: #17324d;
+      text-align: center;
+    }
+
+    .scanner-box {
+      width: 100%;
+      max-width: 520px;
+      margin: 20px auto;
+      padding: 20px;
+      background: white;
+      border: 1px solid #b7c9d8;
+      border-radius: 14px;
+      box-shadow: 0 4px 15px #0002;
+    }
+
+    h2 { margin-top: 5px; }
+
+    video {
+      display: block;
+      width: 100%;
+      min-height: 240px;
+      max-height: 430px;
+      margin: 18px 0;
+      background: #111;
+      border-radius: 10px;
+      object-fit: cover;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #startBtn { background: #82c85c; }
+    #closeBtn { background: #dc2626; color: white; }
+
+    #status {
+      min-height: 42px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="scanner-box">
+    <h2>SA INVENTORY SCANNER</h2>
+    <p>Arahkan kamera ke QR Code atau Barcode 2D</p>
+
+    <video id="video" autoplay muted playsinline></video>
+
+    <p id="status">Tekan tombol MULAI SCAN untuk mengaktifkan kamera.</p>
+
+    <button id="startBtn" onclick="startScanner()">
+      MULAI SCAN
+    </button>
+
+    <button id="closeBtn" onclick="closeScanner()">
+      TUTUP SCANNER
+    </button>
+  </div>
+
+  <script>
+    let controls = null;
+    let scanLocked = false;
+
+    const statusText = document.getElementById('status');
+    const video = document.getElementById('video');
+
+    async function startScanner() {
+      if (!window.ZXingBrowser ||
+          !ZXingBrowser.BrowserMultiFormatReader) {
+        statusText.textContent =
+          'Library scanner gagal dimuat. Periksa koneksi internet.';
+        return;
+      }
+
+      try {
+        stopCamera();
+        scanLocked = false;
+
+        statusText.textContent = 'Meminta izin kamera...';
+
+        const reader =
+          new ZXingBrowser.BrowserMultiFormatReader();
+
+        controls = await reader.decodeFromVideoDevice(
+          undefined,
+          video,
+          (result, error) => {
+            if (result && !scanLocked) {
+              scanLocked = true;
+
+              const code = result.getText().trim();
+
+              if (code) {
+                statusText.textContent =
+                  'Berhasil membaca: ' + code;
+
+                sendResult(code);
+              }
+            }
+
+            if (error &&
+                error.name !== 'NotFoundException') {
+              console.warn(error);
+            }
+          }
+        );
+
+        statusText.textContent =
+          'Kamera aktif. Arahkan ke barcode atau QR Code.';
+
+      } catch (error) {
+        statusText.textContent =
+          'Gagal membuka kamera: ' + error.message;
+
+        console.error(error);
+      }
+    }
+
+    function sendResult(code) {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          type: 'SA_INVENTORY_SCAN_RESULT',
+          code: code
+        }, '*');
+
+        statusText.textContent =
+          'Hasil scan dikirim ke SA Inventory.';
+        stopCamera();
+
+        setTimeout(() => window.close(), 700);
+      } else {
+        statusText.textContent =
+          'Aplikasi utama tidak ditemukan. Silakan buka scanner dari SA Inventory.';
+        scanLocked = false;
+      }
+    }
+
+    function stopCamera() {
+      if (controls) {
+        controls.stop();
+        controls = null;
+      }
+
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+    }
+
+    function closeScanner() {
+      stopCamera();
+      window.close();
+    }
+
+    window.addEventListener('pagehide', stopCamera);
+  </script>
+</body>
+</html>
