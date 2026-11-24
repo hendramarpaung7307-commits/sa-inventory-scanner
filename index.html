@@ -7,51 +7,19 @@
   <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: Arial, sans-serif;
-      background: #10243a;
-      color: white;
-      text-align: center;
-      padding: 12px;
-      margin: 0;
-    }
-    .scanner-box {
-      width: 100%;
-      max-width: 500px;
-      margin: 18px auto;
-      background: white;
-      color: #203247;
-      padding: 18px;
-      border-radius: 15px;
-    }
-    video {
-      display: block;
-      width: 100%;
-      min-height: 240px;
-      max-height: 65vh;
-      object-fit: cover;
-      background: black;
-      border-radius: 10px;
-    }
-    button {
-      width: 100%;
-      padding: 14px;
-      margin-top: 12px;
-      border: 0;
-      border-radius: 7px;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    #startBtn { background: #1677d2; color: white; }
-    #closeBtn { background: #dc2626; color: white; }
-    #status { font-size: 15px; line-height: 1.4; margin-top: 15px; overflow-wrap: anywhere; }
+    body { font-family: Arial, sans-serif; background:#10243a; color:white; text-align:center; padding:12px; margin:0; }
+    .scanner-box { width:100%; max-width:500px; margin:18px auto; background:white; color:#203247; padding:18px; border-radius:15px; }
+    video { display:block; width:100%; min-height:240px; max-height:65vh; object-fit:contain; background:#000; border-radius:10px; }
+    button { width:100%; padding:14px; margin-top:12px; border:0; border-radius:7px; font-size:16px; font-weight:bold; cursor:pointer; }
+    #startBtn { background:#1677d2; color:white; }
+    #closeBtn { background:#dc2626; color:white; }
+    #status { font-size:15px; line-height:1.4; margin-top:15px; overflow-wrap:anywhere; }
   </style>
 </head>
 <body>
   <div class="scanner-box">
     <h2>BARCODE SCANNER</h2>
-    <p>Arahkan kamera ke Barcode 1D atau QR Code. Pastikan seluruh QR terlihat jelas di dalam kamera.</p>
+    <p>Arahkan kamera ke Barcode atau QR Code. Untuk QR SA Material, pastikan seluruh kotak QR terlihat jelas dan memenuhi area kamera.</p>
     <video id="scannerVideo" autoplay muted playsinline></video>
     <div id="status" role="status">Tekan START SCANNER untuk mulai.</div>
     <button id="startBtn" type="button" onclick="startScanner()">START SCANNER</button>
@@ -60,8 +28,8 @@
 
   <script>
     let controls = null;
-    let locked = false;
     let reader = null;
+    let locked = false;
 
     const video = document.getElementById('scannerVideo');
     const statusText = document.getElementById('status');
@@ -76,11 +44,10 @@
     }
 
     async function startScanner() {
-      if (controls) closeScanner();
-
+      closeScanner();
       if (!window.ZXingBrowser ||
           typeof window.ZXingBrowser.BrowserMultiFormatReader !== 'function') {
-        statusText.textContent = 'Library scanner gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.';
+        statusText.textContent = 'Library scanner gagal dimuat. Periksa koneksi internet.';
         return;
       }
 
@@ -89,41 +56,36 @@
         startBtn.disabled = true;
         statusText.textContent = 'Meminta izin kamera...';
 
-        reader = new window.ZXingBrowser.BrowserMultiFormatReader();
+        const Z = window.ZXingBrowser;
+        const formats = Z.BarcodeFormat || {};
+        const hintTypes = Z.DecodeHintType || {};
 
-        // Aktifkan seluruh format umum, termasuk QR_CODE.
-        const formats = window.ZXingBrowser.BarcodeFormat;
-        if (formats) {
-          reader.possibleFormats = [
-            formats.QR_CODE,
-            formats.CODE_128,
-            formats.CODE_39,
-            formats.CODE_93,
-            formats.EAN_13,
-            formats.EAN_8,
-            formats.UPC_A,
-            formats.UPC_E,
-            formats.ITF,
-            formats.CODABAR,
-            formats.DATA_MATRIX,
-            formats.PDF_417,
-            formats.AZTEC
-          ].filter(value => value !== undefined);
+        const supportedFormats = [
+          formats.QR_CODE, formats.CODE_128, formats.CODE_39,
+          formats.CODE_93, formats.EAN_13, formats.EAN_8,
+          formats.UPC_A, formats.UPC_E, formats.ITF, formats.CODABAR,
+          formats.DATA_MATRIX, formats.PDF_417, formats.AZTEC
+        ].filter(value => value !== undefined);
+
+        // Hints harus diberikan saat membuat reader agar benar-benar diterapkan
+        // oleh MultiFormatReader, bukan hanya disimpan pada properti terpisah.
+        const hints = new Map();
+        if (hintTypes.POSSIBLE_FORMATS !== undefined) {
+          hints.set(hintTypes.POSSIBLE_FORMATS, supportedFormats);
+        }
+        if (hintTypes.TRY_HARDER !== undefined) {
+          hints.set(hintTypes.TRY_HARDER, true);
         }
 
-        // TRY_HARDER membantu QR yang agak kecil atau kurang ideal.
-        const hintType = window.ZXingBrowser.DecodeHintType;
-        if (reader.hints && hintType && hintType.TRY_HARDER !== undefined) {
-          reader.hints.set(hintType.TRY_HARDER, true);
-        }
+        reader = new Z.BrowserMultiFormatReader(hints);
 
         controls = await reader.decodeFromConstraints(
           {
             audio: false,
             video: {
               facingMode: { ideal: 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
             }
           },
           video,
@@ -131,16 +93,16 @@
             if (result && !locked) {
               locked = true;
               const code = String(result.getText() || '').trim();
-
               if (!code) {
                 locked = false;
-                statusText.textContent = 'QR terbaca tetapi isinya kosong. Coba sekali lagi.';
+                statusText.textContent = 'QR terbaca tetapi hasilnya kosong. Coba lagi.';
                 return;
               }
 
-              statusText.textContent = 'Berhasil membaca QR/Barcode. Mengirim hasil...';
+              // Format SA Material sudah dipastikan sama dengan Part No di database.
+              // Karena itu, kirim seluruh teks tanpa memotong atau mengubah angka.
+              statusText.textContent = 'Berhasil membaca: ' + code;
 
-              // Kirim hasil ke tab SA Inventory yang membuka scanner ini.
               if (window.opener && !window.opener.closed) {
                 window.opener.postMessage({
                   type: 'SA_INVENTORY_SCAN',
@@ -148,41 +110,40 @@
                 }, '*');
                 closeScanner();
               } else {
-                statusText.textContent = 'Kode terbaca, tetapi halaman SA Inventory tidak ditemukan. Buka scanner dari tombol SCAN aplikasi.';
                 locked = false;
+                statusText.textContent = 'Kode terbaca, tetapi halaman SA Inventory tidak ditemukan. Buka scanner dari tombol SCAN aplikasi.';
               }
               return;
             }
 
-            // Gagal menemukan kode pada satu frame adalah kondisi normal saat mencari.
-            // Jangan tampilkan error merah/menakutkan untuk setiap frame.
+            // Tidak menemukan QR pada satu frame adalah normal saat scanner mencari.
             if (error && !isNormalDecodeMiss(error)) {
               console.warn('Scanner error:', error);
-              statusText.textContent = 'Scanner mengalami kendala. Tahan kamera stabil dan coba lagi.';
+              statusText.textContent = 'Scanner mengalami kendala. Coba tahan kamera lebih stabil.';
             }
           }
         );
 
         const track = video.srcObject && video.srcObject.getVideoTracks()[0];
         if (track && track.applyConstraints) {
-          const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-          const advanced = [];
-          if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-            advanced.push({ focusMode: 'continuous' });
-          }
-          if (advanced.length) {
-            try { await track.applyConstraints({ advanced }); } catch (_) {}
-          }
+          try {
+            const caps = track.getCapabilities ? track.getCapabilities() : {};
+            const advanced = [];
+            if (caps.focusMode && caps.focusMode.includes('continuous')) {
+              advanced.push({ focusMode: 'continuous' });
+            }
+            if (advanced.length) await track.applyConstraints({ advanced });
+          } catch (_) {}
         }
 
-        statusText.textContent = 'Kamera aktif. Dekatkan QR, pastikan fokus, seluruh kotak QR terlihat, lalu tahan HP tetap stabil.';
+        statusText.textContent = 'Kamera aktif. Dekatkan QR hingga terlihat tajam, seluruh kotak QR masuk kamera, lalu tahan HP stabil.';
       } catch (error) {
         console.error('Gagal membuka scanner:', error);
-        const message = String(error && error.message || error);
-        if (error && (error.name === 'NotAllowedError' || /permission denied/i.test(message))) {
-          statusText.textContent = 'Akses kamera ditolak. Izinkan Camera untuk situs ini melalui pengaturan izin browser, lalu muat ulang scanner.';
+        const msg = String(error && error.message || error);
+        if (error && (error.name === 'NotAllowedError' || /permission denied/i.test(msg))) {
+          statusText.textContent = 'Akses kamera ditolak. Izinkan Camera untuk situs ini, lalu muat ulang scanner.';
         } else {
-          statusText.textContent = 'Gagal membuka scanner: ' + message;
+          statusText.textContent = 'Gagal membuka scanner: ' + msg;
         }
       } finally {
         startBtn.disabled = false;
@@ -203,8 +164,7 @@
       }
       reader = null;
       locked = false;
-      startBtn.disabled = false;
-      statusText.textContent = 'Scanner ditutup.';
+      if (startBtn) startBtn.disabled = false;
     }
 
     window.addEventListener('pagehide', closeScanner);
