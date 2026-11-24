@@ -1,39 +1,38 @@
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SA Inventory Barcode Scanner</title>
-
   <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
-
   <style>
+    * { box-sizing: border-box; }
     body {
       font-family: Arial, sans-serif;
       background: #10243a;
       color: white;
       text-align: center;
-      padding: 20px;
+      padding: 12px;
       margin: 0;
     }
-
     .scanner-box {
+      width: 100%;
       max-width: 500px;
-      margin: 30px auto;
+      margin: 18px auto;
       background: white;
       color: #203247;
-      padding: 20px;
+      padding: 18px;
       border-radius: 15px;
     }
-
     video {
+      display: block;
       width: 100%;
+      min-height: 240px;
+      max-height: 65vh;
+      object-fit: cover;
       background: black;
       border-radius: 10px;
-      min-height: 220px;
     }
-
     button {
       width: 100%;
       padding: 14px;
@@ -44,140 +43,171 @@
       font-weight: bold;
       cursor: pointer;
     }
-
     #startBtn { background: #1677d2; color: white; }
     #closeBtn { background: #dc2626; color: white; }
-    #status { font-size: 15px; margin-top: 15px; }
+    #status { font-size: 15px; line-height: 1.4; margin-top: 15px; overflow-wrap: anywhere; }
   </style>
 </head>
-
 <body>
   <div class="scanner-box">
     <h2>BARCODE SCANNER</h2>
-    <p>Arahkan kamera ke Barcode 1D atau QR Code</p>
-
+    <p>Arahkan kamera ke Barcode 1D atau QR Code. Pastikan seluruh QR terlihat jelas di dalam kamera.</p>
     <video id="scannerVideo" autoplay muted playsinline></video>
-
-    <div id="status">Menunggu kamera...</div>
-
-    <button id="startBtn" onclick="startScanner()">START SCANNER</button>
-    <button id="closeBtn" onclick="closeScanner()">CLOSE</button>
+    <div id="status" role="status">Tekan START SCANNER untuk mulai.</div>
+    <button id="startBtn" type="button" onclick="startScanner()">START SCANNER</button>
+    <button id="closeBtn" type="button" onclick="closeScanner()">CLOSE</button>
   </div>
 
   <script>
     let controls = null;
     let locked = false;
+    let reader = null;
 
     const video = document.getElementById('scannerVideo');
     const statusText = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
 
-  
-async function startScanner() {
-  if (!window.ZXingBrowser ||
-      !window.ZXingBrowser.BrowserMultiFormatReader ||
-      !window.ZXingBrowser.BarcodeFormat) {
-    statusText.textContent =
-      'Library scanner gagal dimuat. Periksa koneksi internet.';
-    return;
-  }
-
-  try {
-    locked = false;
-    statusText.textContent = 'Meminta izin kamera...';
-
-    const formats = window.ZXingBrowser.BarcodeFormat;
-
-    const reader = new window.ZXingBrowser.BrowserMultiFormatReader();
-
-    reader.possibleFormats = [
-      formats.QR_CODE,
-      formats.CODE_128,
-      formats.CODE_39,
-      formats.CODE_93,
-      formats.EAN_13,
-      formats.EAN_8,
-      formats.UPC_A,
-      formats.UPC_E,
-      formats.ITF,
-      formats.CODABAR,
-      formats.DATA_MATRIX,
-      formats.PDF_417,
-      formats.AZTEC
-    ].filter(format => format !== undefined);
-
-    controls = await reader.decodeFromConstraints(
-      {
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      },
-      video,
-      function(result, error) {
-        if (result && !locked) {
-          locked = true;
-
-          const code = result.getText().trim();
-
-          if (!code) {
-            locked = false;
-            return;
-          }
-
-          statusText.textContent = 'Berhasil membaca: ' + code;
-
-          if (window.opener && !window.opener.closed) {
-            window.opener.postMessage({
-              type: 'SA_INVENTORY_SCAN',
-              code: code
-            }, '*');
-          }
-
-          closeScanner();
-        }
-
-        if (error && error.name !== 'NotFoundException') {
-          console.warn('Scanner error:', error);
-          statusText.textContent =
-            'Kesalahan pembacaan: ' + error.message;
-        }
-      }
-    );
-
-    const track = video.srcObject &&
-      video.srcObject.getVideoTracks()[0];
-
-    if (track && track.applyConstraints) {
-      track.applyConstraints({
-        advanced: [{ focusMode: 'continuous' }]
-      }).catch(() => {});
+    function isNormalDecodeMiss(error) {
+      if (!error) return false;
+      const name = String(error.name || error.constructor?.name || '');
+      const message = String(error.message || error);
+      return /NotFoundException|ChecksumException|FormatException/i.test(name) ||
+        /No (MultiFormat )?Readers? were able to detect the code|checksum|format exception/i.test(message);
     }
 
-    statusText.textContent =
-      'Kamera aktif. Arahkan barcode ke tengah kamera dan tahan HP.';
+    async function startScanner() {
+      if (controls) closeScanner();
 
-  } catch (error) {
-    statusText.textContent =
-      'Gagal membuka scanner: ' + error.message;
-    console.error(error);
-  }
-}
-  
-    function closeScanner() {
-      if (controls) {
-        controls.stop();
-        controls = null;
+      if (!window.ZXingBrowser ||
+          typeof window.ZXingBrowser.BrowserMultiFormatReader !== 'function') {
+        statusText.textContent = 'Library scanner gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.';
+        return;
       }
 
+      try {
+        locked = false;
+        startBtn.disabled = true;
+        statusText.textContent = 'Meminta izin kamera...';
+
+        reader = new window.ZXingBrowser.BrowserMultiFormatReader();
+
+        // Aktifkan seluruh format umum, termasuk QR_CODE.
+        const formats = window.ZXingBrowser.BarcodeFormat;
+        if (formats) {
+          reader.possibleFormats = [
+            formats.QR_CODE,
+            formats.CODE_128,
+            formats.CODE_39,
+            formats.CODE_93,
+            formats.EAN_13,
+            formats.EAN_8,
+            formats.UPC_A,
+            formats.UPC_E,
+            formats.ITF,
+            formats.CODABAR,
+            formats.DATA_MATRIX,
+            formats.PDF_417,
+            formats.AZTEC
+          ].filter(value => value !== undefined);
+        }
+
+        // TRY_HARDER membantu QR yang agak kecil atau kurang ideal.
+        const hintType = window.ZXingBrowser.DecodeHintType;
+        if (reader.hints && hintType && hintType.TRY_HARDER !== undefined) {
+          reader.hints.set(hintType.TRY_HARDER, true);
+        }
+
+        controls = await reader.decodeFromConstraints(
+          {
+            audio: false,
+            video: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          },
+          video,
+          function(result, error) {
+            if (result && !locked) {
+              locked = true;
+              const code = String(result.getText() || '').trim();
+
+              if (!code) {
+                locked = false;
+                statusText.textContent = 'QR terbaca tetapi isinya kosong. Coba sekali lagi.';
+                return;
+              }
+
+              statusText.textContent = 'Berhasil membaca QR/Barcode. Mengirim hasil...';
+
+              // Kirim hasil ke tab SA Inventory yang membuka scanner ini.
+              if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({
+                  type: 'SA_INVENTORY_SCAN',
+                  code: code
+                }, '*');
+                closeScanner();
+              } else {
+                statusText.textContent = 'Kode terbaca, tetapi halaman SA Inventory tidak ditemukan. Buka scanner dari tombol SCAN aplikasi.';
+                locked = false;
+              }
+              return;
+            }
+
+            // Gagal menemukan kode pada satu frame adalah kondisi normal saat mencari.
+            // Jangan tampilkan error merah/menakutkan untuk setiap frame.
+            if (error && !isNormalDecodeMiss(error)) {
+              console.warn('Scanner error:', error);
+              statusText.textContent = 'Scanner mengalami kendala. Tahan kamera stabil dan coba lagi.';
+            }
+          }
+        );
+
+        const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+        if (track && track.applyConstraints) {
+          const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+          const advanced = [];
+          if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+            advanced.push({ focusMode: 'continuous' });
+          }
+          if (advanced.length) {
+            try { await track.applyConstraints({ advanced }); } catch (_) {}
+          }
+        }
+
+        statusText.textContent = 'Kamera aktif. Dekatkan QR, pastikan fokus, seluruh kotak QR terlihat, lalu tahan HP tetap stabil.';
+      } catch (error) {
+        console.error('Gagal membuka scanner:', error);
+        const message = String(error && error.message || error);
+        if (error && (error.name === 'NotAllowedError' || /permission denied/i.test(message))) {
+          statusText.textContent = 'Akses kamera ditolak. Izinkan Camera untuk situs ini melalui pengaturan izin browser, lalu muat ulang scanner.';
+        } else {
+          statusText.textContent = 'Gagal membuka scanner: ' + message;
+        }
+      } finally {
+        startBtn.disabled = false;
+      }
+    }
+
+    function closeScanner() {
+      if (controls) {
+        try { controls.stop(); } catch (_) {}
+        controls = null;
+      }
       if (video.srcObject) {
         video.srcObject.getTracks().forEach(track => track.stop());
         video.srcObject = null;
       }
+      if (reader && typeof reader.reset === 'function') {
+        try { reader.reset(); } catch (_) {}
+      }
+      reader = null;
+      locked = false;
+      startBtn.disabled = false;
+      statusText.textContent = 'Scanner ditutup.';
     }
 
-    window.addEventListener('beforeunload', closeScanner);
+    window.addEventListener('pagehide', closeScanner);
   </script>
 </body>
 </html>
